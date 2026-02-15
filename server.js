@@ -27,42 +27,40 @@ async function fetch_mysql() {
                 
                 if (success) {
                     TOKEN = TOKEN_CONFIG.TOKEN;
-                    // Clear the token file for security after moving to DB
                     fs.writeFileSync(tokenPath, JSON.stringify({ TOKEN: "MOVED_TO_DATABASE" }, null, 4));
                     console.log("^2[Browns Loading Screen]^7 Token successfully migrated to Database.");
+                    startBot();
                 }
             } else {
-                console.log("^1[Browns Loading Screen]^7 No valid token found in config/token.json. Please provide a Discord Bot Token.");
+                console.log("^1[Browns Loading Screen]^7 No valid token found in config/token.json or Database.");
             }
         } else if (response && response[0]) {
             TOKEN = response[0].token;
+            startBot();
         }
     } catch (err) {
         console.error("^1[Browns Loading Screen]^7 Database error:", err.message);
     }
 }
 
-fetch_mysql();
-
 // New Discord.js v14 Client initialization
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent // REQUIRED: Enable this in Discord Dev Portal!
     ],
     partials: [Partials.Message, Partials.Channel]
 });
 
 /**
- * Checks if token is available and logs the bot in
+ * Logs the bot in
  */
-function checkToken() {
+function startBot() {
     if (TOKEN && TOKEN !== "empty_token" && TOKEN !== "MOVED_TO_DATABASE") { 
         client.login(TOKEN).catch(err => {
-            console.error("^1[Browns Loading Screen]^7 Login failed: Check your Discord Token.", err.message);
+            console.error("^1[Browns Loading Screen]^7 Login failed: Check your Discord Token and Intents.", err.message);
         });
-        clearInterval(tokenReady);
     }
 }
 
@@ -71,35 +69,44 @@ function checkToken() {
  */
 async function fetchAnnouncements() {
     try {
-        const channel = await client.channels.fetch(ANNOUNCEMENTS_CHANNEL_ID);
+        console.log("^3[Browns Loading Screen]^7 Fetching announcements from channel: " + ANNOUNCEMENTS_CHANNEL_ID);
+        
+        const channel = await client.channels.fetch(ANNOUNCEMENTS_CHANNEL_ID).catch(e => {
+            throw new Error("Could not find channel. Ensure the Bot is in the server and has 'View Channel' permissions.");
+        });
+
         if (!channel || !channel.isTextBased()) {
             console.error("^1[Browns Loading Screen]^7 Channel not found or is not a text channel.");
             return;
         }
 
-        const messages = await channel.messages.fetch({ limit: 10 });
+        // Check for View Channel and Read Message History permissions
+        const messages = await channel.messages.fetch({ limit: 10 }).catch(e => {
+            throw new Error("Missing Access to messages. Ensure the Bot has 'Read Message History' permission.");
+        });
+
         let data = [];
 
         messages.forEach(message => {
-            // Filter out empty messages or bot embeds if necessary
             if (message.content || message.embeds.length > 0) {
                 data.push({
                     channel: channel.name,
                     name: message.author.username,
                     url: message.author.displayAvatarURL({ extension: "png" }),
-                    msg: message.content || (message.embeds[0] ? message.embeds[0].description : "Embed Message")
+                    msg: message.content || (message.embeds[0] ? (message.embeds[0].description || message.embeds[0].title) : "Embed Message")
                 });
             }
         });
 
-        // Write the data to the JSON file for the NUI to read
         fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
         console.log("^2[Browns Loading Screen]^7 Successfully fetched Discord announcements.");
 
     } catch (error) {
-        console.error("^1[Browns Loading Screen]^7 Error fetching announcements:", error.message);
+        console.error("^1[Browns Loading Screen]^7 Error:", error.message);
     } finally {
-        client.destroy(); // Shut down bot after task to save resources
+        // We do NOT destroy the client if you want it to stay active, 
+        // but since this script runs once on start, we can leave it or destroy it.
+        // client.destroy(); 
     }
 }
 
@@ -108,7 +115,5 @@ client.once("ready", () => {
     fetchAnnouncements();
 });
 
-// Polling interval to wait for the DB token to be fetched
-tokenReady = setInterval(() => {
-    checkToken();
-}, 1000);
+// Start initialization
+fetch_mysql();
